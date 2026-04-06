@@ -41,7 +41,7 @@ SELECT
     Actor2Name                           AS actor2
 FROM `{GDELT_TABLE}`
 WHERE
-    _PARTITIONTIME BETWEEN TIMESTAMP('{DATE_START}') AND TIMESTAMP('{DATE_END}')
+    SQLDATE BETWEEN {DATE_START.replace('-', '')} AND {DATE_END.replace('-', '')}
     AND ActionGeo_CountryCode IN ({_COUNTRY_LIST})
     AND ActionGeo_Lat  IS NOT NULL
     AND ActionGeo_Long IS NOT NULL
