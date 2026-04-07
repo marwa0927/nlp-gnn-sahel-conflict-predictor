@@ -47,44 +47,31 @@ def build_daily_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Reindex to full grid, fill missing with 0
     full_idx = _full_index(agg)
-    agg = agg.reindex(full_idx, fill_value=0.0)
+    full_grid = pd.DataFrame(full_idx.tolist(), columns=["node_id", "date"])
+    agg = agg.reset_index()
+    agg = full_grid.merge(agg, on=["node_id", "date"], how="left").fillna(0.0)
 
     return agg
 
 
-def add_lag_features(daily_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each column in BASE_FEATURES add:
-      - {col}_lag7   — 7-day lag
-      - {col}_roll7  — 7-day rolling mean
-      - {col}_roll14 — 14-day rolling mean
+def add_lag_features(daily: pd.DataFrame) -> pd.DataFrame:
+    from config import BASE_FEATURES
 
-    Computed per node_id group; NaNs introduced at group boundaries are
-    filled with 0.
-    """
-    df = daily_df.sort_index(level=["node_id", "date"]).copy()
+    # Reset to clean integer index before any sorting
+    daily = daily.copy().reset_index(drop=True)
+    daily["date"] = pd.to_datetime(daily["date"])
+    daily = daily.sort_values(["node_id", "date"]).reset_index(drop=True)
 
-    new_cols: dict[str, pd.Series] = {}
+    result = []
+    for node_id, grp in daily.groupby("node_id", sort=False):
+        grp = grp.copy().reset_index(drop=True)
+        for col in BASE_FEATURES:
+            grp[f"{col}_lag7"]   = grp[col].shift(7).fillna(0.0)
+            grp[f"{col}_roll7"]  = grp[col].rolling(7,  min_periods=1).mean()
+            grp[f"{col}_roll14"] = grp[col].rolling(14, min_periods=1).mean()
+        result.append(grp)
 
-    for col in BASE_FEATURES:
-        if col not in df.columns:
-            continue
-
-        grouped = df[col].groupby(level="node_id")
-
-        new_cols[f"{col}_lag7"] = grouped.shift(7)
-        new_cols[f"{col}_roll7"] = grouped.transform(
-            lambda s: s.rolling(7, min_periods=1).mean()
-        )
-        new_cols[f"{col}_roll14"] = grouped.transform(
-            lambda s: s.rolling(14, min_periods=1).mean()
-        )
-
-    lag_df = pd.DataFrame(new_cols, index=df.index)
-    df = pd.concat([df, lag_df], axis=1).fillna(0.0)
-
-    return df
-
+    return pd.concat(result, ignore_index=True)
 
 def save_features(df: pd.DataFrame) -> None:
     """Persist *df* to FEATURES_PATH as parquet."""
