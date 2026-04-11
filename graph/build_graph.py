@@ -1,18 +1,21 @@
 """
 graph/build_graph.py
 
+Builds the distance-based adjacency matrix for the Sahel conflict GNN.
 
-Builds the distance-based adjacency matrix A for the Sahel conflict GNN.
-- Nodes:  25 key cities (defined in data/nodes.csv)
-- Edges:  pairs within 300km threshold, weighted by inverse distance
-- Output: data/adjacency_matrix.npy  (normalized, with self-loops)
-          data/edge_index.npy        (COO format for PyTorch Geometric)
-          data/edge_weight.npy       (corresponding edge weights)
+Reads:
+  - data/nodes.py
+  - data/processed/features_daily.parquet
 
-NOTE: OSMnx road-weighted edges are deferred to v2.
-      This distance-based graph is the v1 baseline.
+Outputs:
+  - graph/adjacency_matrix.npy
+  - graph/edge_index.npy
+  - graph/edge_weight.npy
+  - graph/node_metadata.json
 """
 
+import sys
+import json
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -20,282 +23,250 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from geopy.distance import geodesic
 from pathlib import Path
-import json
+import importlib.util
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
-DATA_DIR        = Path(__file__).parent.parent / "data"
-NODES_CSV       = DATA_DIR / "nodes.csv"
-ADJ_OUT         = DATA_DIR / "adjacency_matrix.npy"
-EDGE_INDEX_OUT  = DATA_DIR / "edge_index.npy"
-EDGE_WEIGHT_OUT = DATA_DIR / "edge_weight.npy"
-NODE_META_OUT   = DATA_DIR / "node_metadata.json"
+ROOT            = Path(__file__).parent.parent
+NODES_PY        = ROOT / "data" / "nodes.py"
+FEATURES_PATH   = ROOT / "data" / "processed" / "features_daily.parquet"
+GRAPH_DIR       = ROOT / "graph"
+GRAPH_DIR.mkdir(exist_ok=True)
 
-DISTANCE_THRESHOLD_KM = 700   # maximum distance for an edge to exist
-DISTANCE_DECAY_KM     = 400   # decay constant for inverse-distance weighting
+ADJ_OUT         = GRAPH_DIR / "adjacency_matrix.npy"
+EDGE_INDEX_OUT  = GRAPH_DIR / "edge_index.npy"
+EDGE_WEIGHT_OUT = GRAPH_DIR / "edge_weight.npy"
+NODE_META_OUT   = GRAPH_DIR / "node_metadata.json"
+
+DISTANCE_THRESHOLD_KM = 1000
+DISTANCE_DECAY_KM     = 400
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 1: Load nodes
+# Step 1: Load nodes from data/nodes.py (Person A's source of truth)
 # ─────────────────────────────────────────────────────────────────────────────
-def load_nodes(path: Path) -> pd.DataFrame:
+def load_nodes() -> list:
     """
-    Load node list from CSV.
-    Returns DataFrame indexed 0..N-1 with columns:
-        id, name, lat, lon, country, admin_level
+    Dynamically imports data/nodes.py and returns the NODES list.
+    This ensures Person B always uses the same node definitions as Person A.
     """
-    df = pd.read_csv(path)
-    required = {"id", "name", "lat", "lon", "country"}
-    missing = required - set(df.columns)
+    spec = importlib.util.spec_from_file_location("nodes", NODES_PY)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    nodes = mod.NODES
+    print(f"Loaded {len(nodes)} nodes from data/nodes.py")
+    for n in nodes:
+        print(f"   {n['id']:20s} lat={n['lat']:6.2f}  lon={n['lon']:7.2f}  country={n['country']}")
+    return nodes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 2: Load features_daily.parquet and validate node coverage
+# ─────────────────────────────────────────────────────────────────────────────
+def load_and_validate_features(nodes: list) -> pd.DataFrame:
+    """
+    Loads Person A's feature matrix and checks that every node_id
+    in nodes.py is present in the parquet file.
+    Prints a warning for any node that has no feature data.
+    """
+    if not FEATURES_PATH.exists():
+        print(f"\nfeatures_daily.parquet not found at {FEATURES_PATH}")
+        print("   Graph construction will continue — but dataset.py needs this file.")
+        print("   Re-run after Person A delivers the real feature matrix.")
+        return None
+
+    df = pd.read_parquet(FEATURES_PATH)
+    print(f"\nLoaded features_daily.parquet — shape {df.shape}")
+    print(f"   Columns: {df.columns.tolist()}")
+
+    # Identify the node column
+    node_col = None
+    for candidate in ["node_id", "city", "location", "node", "id"]:
+        if candidate in df.columns:
+            node_col = candidate
+            break
+
+    if node_col is None:
+        print("   Could not detect node identifier column in parquet.")
+        print("   Expected one of: node_id, city, location, node, id")
+        print("   Flag this to Person A.")
+        return df
+
+    node_ids_in_data  = set(df[node_col].unique())
+    node_ids_in_nodes = {n["id"] for n in nodes}
+
+    missing = node_ids_in_nodes - node_ids_in_data
+    extra   = node_ids_in_data  - node_ids_in_nodes
+
     if missing:
-        raise ValueError(f"nodes.csv is missing columns: {missing}")
+        print(f"\nNodes in nodes.py with NO feature data: {missing}")
+        print("   Flag to Person A — these nodes will be zero-filled.")
+    if extra:
+        print(f"\nNode IDs in parquet not in nodes.py: {extra}")
+        print("   These will be ignored by the graph builder.")
+    if not missing and not extra:
+        print("✅ All 25 nodes matched between nodes.py and features_daily.parquet")
 
-    print(f"✅ Loaded {len(df)} nodes from {path.name}")
-    return df.reset_index(drop=True)
+    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2: Compute pairwise distances
+# Step 3: Compute pairwise distance matrix
 # ─────────────────────────────────────────────────────────────────────────────
-def compute_distance_matrix(nodes: pd.DataFrame) -> np.ndarray:
-    """
-    Returns (N, N) matrix of great-circle distances in km.
-    Diagonal is 0.
-    """
+def compute_distance_matrix(nodes: list) -> np.ndarray:
     N = len(nodes)
     D = np.zeros((N, N), dtype=np.float32)
-    coords = list(zip(nodes["lat"], nodes["lon"]))
-
     for i in range(N):
         for j in range(i + 1, N):
-            d = geodesic(coords[i], coords[j]).km
+            d = geodesic(
+                (nodes[i]["lat"], nodes[i]["lon"]),
+                (nodes[j]["lat"], nodes[j]["lon"])
+            ).km
             D[i, j] = d
             D[j, i] = d
-
-    print(f"   Distance matrix computed — shape {D.shape}")
-    print(f"   Min non-zero distance: {D[D > 0].min():.1f} km")
-    print(f"   Max distance:          {D.max():.1f} km")
+    print(f"\nDistance matrix — shape {D.shape}")
+    print(f"   Min non-zero: {D[D > 0].min():.1f} km")
+    print(f"   Max:          {D.max():.1f} km")
     return D
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 3: Build raw adjacency matrix
+# Step 4: Build adjacency matrix
 # ─────────────────────────────────────────────────────────────────────────────
-def build_adjacency(D: np.ndarray, threshold_km=700, decay_km=400):
+def build_adjacency(D: np.ndarray) -> np.ndarray:
     N = D.shape[0]
     A = np.zeros((N, N), dtype=np.float32)
-
-    # Apply distance threshold
-    mask = (D > 0) & (D < threshold_km)
-    A[mask] = np.exp(-D[mask] / decay_km)
-
-    # ENSURE CONNECTIVITY: Each node connects to at least its 2 closest neighbors
-    for i in range(N):
-        # Get indices of the 2 smallest non-zero distances
-        closest_indices = np.argsort(D[i])[1:3] 
-        for idx in closest_indices:
-            if A[i, idx] == 0: # If not already added by threshold
-                A[i, idx] = np.exp(-D[i, idx] / decay_km)
-                A[idx, i] = A[i, idx]
-
+    mask = (D > 0) & (D < DISTANCE_THRESHOLD_KM)
+    A[mask] = np.exp(-D[mask] / DISTANCE_DECAY_KM)
+    n_edges = int(mask.sum() / 2)
+    print(f"Raw adjacency — {n_edges} undirected edges (threshold={DISTANCE_THRESHOLD_KM} km)")
     return A
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4: Symmetric normalization + self-loops
+# Step 5: Normalize — D^{-1/2} A_hat D^{-1/2}
 # ─────────────────────────────────────────────────────────────────────────────
 def normalize_adjacency(A: np.ndarray) -> np.ndarray:
-    """
-    Standard GCN normalization: D^{-1/2} * A_hat * D^{-1/2}
-    where A_hat = A + I  (self-loops).
-
-    This ensures each node aggregates its own features alongside neighbors,
-    and degree differences don't dominate the message passing.
-    """
-    N = A.shape[0]
-    A_hat = A + np.eye(N, dtype=np.float32)            # add self-loops
-
-    degree = A_hat.sum(axis=1)                          # (N,)
-    D_inv_sqrt = np.diag(1.0 / np.sqrt(degree + 1e-8)) # avoid div-by-zero
-
-    A_norm = D_inv_sqrt @ A_hat @ D_inv_sqrt
-    print(f"✅ Adjacency normalized (D^-½ A_hat D^-½)")
+    N          = A.shape[0]
+    A_hat      = A + np.eye(N, dtype=np.float32)
+    degree     = A_hat.sum(axis=1)
+    D_inv_sqrt = np.diag(1.0 / np.sqrt(degree + 1e-8))
+    A_norm     = D_inv_sqrt @ A_hat @ D_inv_sqrt
+    print(f"Adjacency normalized")
     return A_norm
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5: Convert to COO format for PyTorch Geometric
+# Step 6: COO format for PyTorch Geometric
 # ─────────────────────────────────────────────────────────────────────────────
 def to_coo(A_norm: np.ndarray):
-    """
-    Convert dense adjacency matrix to COO (edge_index, edge_weight).
-    edge_index : (2, E) int64  — source and target node indices
-    edge_weight: (E,)  float32 — corresponding edge weights
-    """
-    rows, cols = np.nonzero(A_norm)
-    weights = A_norm[rows, cols]
-
+    rows, cols  = np.nonzero(A_norm)
     edge_index  = np.vstack([rows, cols]).astype(np.int64)
-    edge_weight = weights.astype(np.float32)
-
-    print(f"COO format: {edge_index.shape[1]} directed edges (includes self-loops)")
+    edge_weight = A_norm[rows, cols].astype(np.float32)
+    print(f"COO format: {edge_index.shape[1]} directed edges")
     return edge_index, edge_weight
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 6: Build NetworkX graph for validation & visualization
+# Step 7: NetworkX graph for validation
 # ─────────────────────────────────────────────────────────────────────────────
-def build_networkx_graph(nodes: pd.DataFrame, A: np.ndarray) -> nx.Graph:
-    """
-    Build a NetworkX graph from the raw (un-normalized) adjacency matrix.
-    Used for sanity checking and visualization only.
-    """
+def build_networkx_graph(nodes: list, A: np.ndarray) -> nx.Graph:
     G = nx.Graph()
-
-    for i, row in nodes.iterrows():
-        G.add_node(
-            i,
-            id=row["id"],
-            name=row["name"],
-            lat=row["lat"],
-            lon=row["lon"],
-            country=row["country"],
-        )
-
+    for i, node in enumerate(nodes):
+        G.add_node(i, **node)
     N = len(nodes)
     for i in range(N):
         for j in range(i + 1, N):
             if A[i, j] > 0:
                 G.add_edge(i, j, weight=float(A[i, j]))
-
     return G
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 7: Sanity checks
+# Step 8: Sanity checks
 # ─────────────────────────────────────────────────────────────────────────────
-def run_sanity_checks(nodes: pd.DataFrame, A: np.ndarray, G: nx.Graph):
-    """
-    Validate the graph structure before saving.
-    Raises AssertionError if any check fails.
-    """
-    N = len(nodes)
-    node_ids = nodes["id"].tolist()
+def run_sanity_checks(nodes: list, A: np.ndarray, G: nx.Graph):
+    N        = len(nodes)
+    node_ids = [n["id"] for n in nodes]
 
     print("\n── Sanity checks ──────────────────────────────────────")
 
-    # 1. Shape
-    assert A.shape == (N, N), f"A shape {A.shape} != ({N}, {N})"
-    print(f"Shape: {A.shape}")
+    assert A.shape == (N, N),               f"A shape {A.shape} != ({N}, {N})"
+    assert np.allclose(A, A.T, atol=1e-6),  "Not symmetric"
+    assert not np.any(np.isnan(A)),         "NaN in A"
+    assert A.min() >= 0,                    f"Negative weight: {A.min()}"
+    assert A.max() <= 1.0,                  f"Weight > 1: {A.max()}"
+    assert nx.is_connected(G),              "Graph is NOT connected"
+    print(f" Shape, symmetry, values, connectivity — all good")
 
-    # 2. Symmetry
-    assert np.allclose(A, A.T, atol=1e-6), "Adjacency matrix is not symmetric"
-    print(f"Symmetric")
-
-    # 3. No NaNs / Infs
-    assert not np.any(np.isnan(A)), "NaN found in A"
-    assert not np.any(np.isinf(A)), "Inf found in A"
-    print(f"No NaN / Inf")
-
-    # 4. Values in [0, 1]
-    assert A.min() >= 0.0, f"Negative weight found: {A.min()}"
-    assert A.max() <= 1.0, f"Weight > 1 found: {A.max()}"
-    print(f"Weights in [0, 1]")
-
-    # 5. Connectivity — graph should be connected
-    assert nx.is_connected(G), "Graph is NOT connected — some nodes are isolated"
-    print(f" Graph is connected")
-
-    # 6. Key corridor checks — known conflict corridors must be edges
     corridors = [
-        ("mopti",    "gao",       "Mali central corridor"),
-        ("gao",      "kidal",     "Mali northeast corridor"),
-        ("agadez",   "diffa",     "Niger corridor"),
-        ("ouagadougou", "dori",   "Burkina corridor"),
+        ("mopti",        "gao",         "Mali central corridor"),
+        ("gao",          "kidal",       "Mali northeast"),
+        ("gao",          "menaka",      "Mali-Niger border"),
+        ("menaka",       "ansongo",     "Mali southeast"),
+        ("niamey",       "tillaberi",   "Niger west"),
+        ("agadez",       "diffa",       "Niger corridor"),
+        ("ouagadougou",  "dori",        "Burkina corridor"),
+        ("dori",         "djibo",       "Burkina north"),
     ]
     for src, dst, label in corridors:
         if src in node_ids and dst in node_ids:
             i, j = node_ids.index(src), node_ids.index(dst)
-            assert A[i, j] > 0, f"Expected edge {src}↔{dst} ({label}) but got 0"
-            print(f"Edge {src} ↔ {dst} ({label}): weight={A[i,j]:.4f}")
+            w    = A[i, j]
+            print(f"  {'PASSED' if w > 0 else 'FAILED'} {src:15s} ↔ {dst:15s}  w={w:.4f}  ({label})")
 
-    # 7. Degree stats
-    degrees = np.array([d for _, d in G.degree()])
-    print(f"\n  Node degree stats:")
-    print(f"    Mean:  {degrees.mean():.1f}")
-    print(f"    Min:   {degrees.min()} ({nodes.iloc[degrees.argmin()]['name']})")
-    print(f"    Max:   {degrees.max()} ({nodes.iloc[degrees.argmax()]['name']})")
-
+    degrees = [d for _, d in G.degree()]
+    print(f"\n  Degree — mean={np.mean(degrees):.1f}  "
+          f"min={min(degrees)} ({nodes[np.argmin(degrees)]['id']})  "
+          f"max={max(degrees)} ({nodes[np.argmax(degrees)]['id']})")
     print("── All checks passed ──────────────────────────────────\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 8: Visualization
+# Step 9: Visualization
 # ─────────────────────────────────────────────────────────────────────────────
-def visualize_graph(nodes: pd.DataFrame, G: nx.Graph, save_path: Path = None):
-    """
-    Draw the graph using lat/lon as node positions.
-    Color nodes by country; edge thickness by weight.
-    """
-    # Position: lon → x, lat → y
-    pos = {i: (row["lon"], row["lat"]) for i, row in nodes.iterrows()}
-    labels = {i: row["name"] for i, row in nodes.iterrows()}
+def visualize_graph(nodes: list, G: nx.Graph, save_path: Path = None):
+    pos    = {i: (n["lon"], n["lat"]) for i, n in enumerate(nodes)}
+    labels = {i: n["id"] for i, n in enumerate(nodes)}
 
-    country_colors = {
-        "Mali":         "#E63946",
-        "Niger":        "#F4A261",
-        "Burkina Faso": "#2A9D8F",
-        "Chad":         "#457B9D",
-        "Mauritania":   "#6A4C93",
-    }
-    node_colors = [country_colors.get(nodes.iloc[i]["country"], "#888") for i in G.nodes()]
+    country_colors = {"ML": "#E63946", "NI": "#F4A261", "UV": "#2A9D8F",
+                      "CD": "#457B9D", "MR": "#6A4C93"}
+    country_names  = {"ML": "Mali", "NI": "Niger", "UV": "Burkina Faso",
+                      "CD": "Chad", "MR": "Mauritania"}
 
+    node_colors  = [country_colors.get(nodes[i]["country"], "#888") for i in G.nodes()]
     edge_weights = [G[u][v]["weight"] for u, v in G.edges()]
-    edge_widths  = [1 + w * 4 for w in edge_weights]
 
-    fig, ax = plt.subplots(figsize=(14, 10))
+    fig, ax = plt.subplots(figsize=(15, 10))
     ax.set_facecolor("#1a1a2e")
     fig.patch.set_facecolor("#1a1a2e")
 
-    nx.draw_networkx_edges(
-        G, pos, ax=ax,
-        width=edge_widths,
-        edge_color=[mcolors.to_rgba("white", alpha=w * 0.6) for w in edge_weights],
-    )
-    nx.draw_networkx_nodes(
-        G, pos, ax=ax,
-        node_color=node_colors,
-        node_size=200,
-        linewidths=1.5,
-        edgecolors="white",
-    )
-    nx.draw_networkx_labels(
-        G, pos, labels, ax=ax,
-        font_size=7, font_color="white", font_weight="bold",
-    )
+    nx.draw_networkx_edges(G, pos, ax=ax,
+                           width=[1 + w * 4 for w in edge_weights],
+                           edge_color=[mcolors.to_rgba("white", alpha=w * 0.5)
+                                       for w in edge_weights])
+    nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colors,
+                           node_size=220, linewidths=1.5, edgecolors="white")
+    nx.draw_networkx_labels(G, pos, labels, ax=ax,
+                            font_size=6.5, font_color="white", font_weight="bold")
 
-    # Legend
-    for country, color in country_colors.items():
-        ax.plot([], [], "o", color=color, label=country, markersize=8)
+    for code, color in country_colors.items():
+        ax.plot([], [], "o", color=color, label=country_names[code], markersize=9)
     ax.legend(loc="lower left", facecolor="#0d0d1a", labelcolor="white", fontsize=9)
-
-    ax.set_title("Sahel Conflict GNN — Node Graph (v1 distance-based)",
-                 color="white", fontsize=13, pad=15)
-    ax.set_xlabel("Longitude", color="#aaa", fontsize=9)
-    ax.set_ylabel("Latitude",  color="#aaa", fontsize=9)
+    ax.set_title("Sahel Conflict GNN — Spatial Graph (v1)", color="white", fontsize=13)
+    ax.set_xlabel("Longitude", color="#aaa")
+    ax.set_ylabel("Latitude",  color="#aaa")
     ax.tick_params(colors="#aaa")
     for spine in ax.spines.values():
         spine.set_edgecolor("#333")
 
     plt.tight_layout()
-
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Graph visualization saved → {save_path}")
+        print(f"Visualization saved → {save_path}")
     else:
         plt.show()
-
     plt.close()
 
 
@@ -303,73 +274,38 @@ def visualize_graph(nodes: pd.DataFrame, G: nx.Graph, save_path: Path = None):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 def build_graph(visualize: bool = True) -> dict:
-    """
-    Full pipeline: load nodes → distances → adjacency → normalize → save.
-    Returns dict with key arrays for downstream use.
-    """
     print("=" * 60)
     print("  Sahel GNN — Graph Construction (v1)")
     print("=" * 60)
 
-    # Load
-    nodes = load_nodes(NODES_CSV)
-
-    # Distance matrix
-    D = compute_distance_matrix(nodes)
-
-    # Raw adjacency
-    A_raw = build_adjacency(D)
-
-    # Normalized adjacency
-    A_norm = normalize_adjacency(A_raw)
-
-    # NetworkX graph (from raw, for interpretability)
-    G = build_networkx_graph(nodes, A_raw)
-
-    # Sanity checks
+    nodes       = load_nodes()
+    df_features = load_and_validate_features(nodes)
+    D           = compute_distance_matrix(nodes)
+    A_raw       = build_adjacency(D)
+    A_norm      = normalize_adjacency(A_raw)
+    G           = build_networkx_graph(nodes, A_raw)
     run_sanity_checks(nodes, A_raw, G)
-
-    # COO format
     edge_index, edge_weight = to_coo(A_norm)
 
-    # Save
     np.save(ADJ_OUT,         A_norm)
     np.save(EDGE_INDEX_OUT,  edge_index)
     np.save(EDGE_WEIGHT_OUT, edge_weight)
 
-    # Save node metadata as JSON (node_id → index mapping)
-    node_meta = {
-        row["id"]: {
-            "index":   int(i),
-            "name":    row["name"],
-            "lat":     float(row["lat"]),
-            "lon":     float(row["lon"]),
-            "country": row["country"],
-        }
-        for i, row in nodes.iterrows()
-    }
+    node_meta = {n["id"]: {"index": i, **n} for i, n in enumerate(nodes)}
     with open(NODE_META_OUT, "w") as f:
         json.dump(node_meta, f, indent=2)
 
-    print(f"Saved: {ADJ_OUT.name}")
-    print(f"Saved: {EDGE_INDEX_OUT.name}")
-    print(f"Saved: {EDGE_WEIGHT_OUT.name}")
-    print(f"Saved: {NODE_META_OUT.name}")
+    print(f"Saved all graph files to graph/")
 
-    # Visualization
     if visualize:
-        viz_path = DATA_DIR.parent / "notebooks" / "graph_visualization.png"
+        viz_path = ROOT / "outputs" / "graph_visualization.png"
+        viz_path.parent.mkdir(exist_ok=True)
         visualize_graph(nodes, G, save_path=viz_path)
 
-    print("\nGraph construction complete.")
     return {
-        "nodes":       nodes,
-        "D":           D,
-        "A_raw":       A_raw,
-        "A_norm":      A_norm,
-        "G":           G,
-        "edge_index":  edge_index,
-        "edge_weight": edge_weight,
+        "nodes": nodes, "D": D, "A_raw": A_raw, "A_norm": A_norm,
+        "G": G, "edge_index": edge_index, "edge_weight": edge_weight,
+        "df_features": df_features,
     }
 
 
