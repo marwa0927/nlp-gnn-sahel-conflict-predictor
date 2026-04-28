@@ -8,3 +8,4 @@ geopy>=2.4
 matplotlib>=3.8
 python-dotenv>=1.0
 feedparser>=6.0
+scikit-learn>=1.3
