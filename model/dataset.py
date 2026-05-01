@@ -1,4 +1,3 @@
-
 """
 model/dataset.py
 ================
@@ -7,7 +6,7 @@ PyTorch Geometric dataset for Sahel conflict prediction.
 
 Reads:
   - data/nodes.py                          (Person A's source of truth — node order)
-  - data/processed/features_daily.parquet  (Person A's feature matrix)
+  - data/processed/dataset_daily.parquet  (Person A's feature matrix)
   - graph/edge_index.npy                   (built by build_graph.py)
   - graph/edge_weight.npy                  (built by build_graph.py)
 
@@ -31,7 +30,7 @@ from typing import Optional, Tuple, List
 
 ROOT       = Path(__file__).parent.parent
 NODES_PY   = ROOT / "data" / "nodes.py"
-FEATURES_PATH = ROOT / "data" / "processed" / "features_daily.parquet"
+FEATURES_PATH = ROOT / "data" / "processed" / "dataset_daily.parquet"
 GRAPH_DIR  = ROOT / "graph"
 
 # Columns that are labels, not features
@@ -52,7 +51,7 @@ def load_nodes() -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Build X (T, N, F) and Y (T, N, 2) from features_daily.parquet
+# Build X (T, N, F) and Y (T, N, 2) from dataset_daily.parquet
 # ─────────────────────────────────────────────────────────────────────────────
 def build_matrices_from_parquet(
     nodes: list,
