@@ -1,22 +1,5 @@
 """
 model/dataset.py
-================
-
-PyTorch Geometric dataset for Sahel conflict prediction.
-
-Reads:
-  - data/nodes.py                          (Person A's source of truth — node order)
-  - data/processed/dataset_daily.parquet  (Person A's feature matrix)
-  - graph/edge_index.npy                   (built by build_graph.py)
-  - graph/edge_weight.npy                  (built by build_graph.py)
-
-The parquet file is expected to have columns:
-  node_id : str   — matches id field in nodes.py
-  date    : str   — YYYY-MM-DD
-  + feature columns (avg_tone, goldstein, n_articles, etc.)
-
-Labels (y_conflict, y_unrest) must also be columns in the parquet,
-OR provided separately once Person A delivers the ACLED labels.
 """
 
 import importlib.util
@@ -37,7 +20,8 @@ GRAPH_DIR  = ROOT / "graph"
 LABEL_COLS   = ["y_conflict", "y_unrest"]
 # Columns to drop when building the feature vector
 NON_FEATURE_COLS = {"node_id", "date", "y_conflict", "y_unrest",
-                    "city", "location", "node", "id", "index"}
+                    "city", "location", "node", "id", "index",
+                    "fatalities"}  # fatalities is a label, not a feature
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,7 +60,6 @@ def build_matrices_from_parquet(
         raise ValueError(
             "Cannot find node identifier column in parquet. "
             "Expected one of: node_id, city, location, node, id. "
-            "Check with Person A."
         )
 
     # ── Detect date column ───────────────────────────────────────────────────
@@ -94,7 +77,6 @@ def build_matrices_from_parquet(
             raise ValueError(
                 "Cannot find date column in parquet. "
                 "Expected one of: date, event_date, day, timestamp. "
-                "Check with Person A."
             )
 
     df[date_col] = pd.to_datetime(df[date_col]).dt.strftime("%Y-%m-%d")
@@ -114,7 +96,11 @@ def build_matrices_from_parquet(
 
     # ── Check label columns ──────────────────────────────────────────────────
     has_labels = all(c in df.columns for c in LABEL_COLS)
-    if not has_labels:
+    if has_labels:
+        rate_c = df["y_conflict"].mean()
+        rate_u = df["y_unrest"].mean()
+        print(f"✅ Labels found — conflict rate={rate_c:.4f}  unrest rate={rate_u:.4f}")
+    else:
         print(f"  Label columns {LABEL_COLS} not found in parquet.")
         print("   Y will be all zeros until Person A delivers ACLED labels.")
 
