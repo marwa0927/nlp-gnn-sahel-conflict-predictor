@@ -3,6 +3,14 @@ import pandas as pd
 from config import RADIUS_KM
 from data.nodes import NODES
 
+NODE_RADIUS_KM = {
+    "niamey":    120,
+    "agadez":    120,
+    "tahoua":    120,
+    "tillaberi": 120,
+}
+DEFAULT_RADIUS_KM = 80
+
 _NODE_IDS  = [n["id"] for n in NODES]
 _NODE_LATS = np.array([n["lat"] for n in NODES])
 _NODE_LONS = np.array([n["lon"] for n in NODES])
@@ -28,7 +36,9 @@ def assign_nodes_to_df(df: pd.DataFrame) -> pd.DataFrame:
     nearest_dist = dist[np.arange(len(df)), nearest_idx]
 
     node_ids = np.array(_NODE_IDS)
-    df["node_id"] = np.where(nearest_dist <= RADIUS_KM,
+    radii = np.array([NODE_RADIUS_KM.get(nid, DEFAULT_RADIUS_KM) for nid in _NODE_IDS])
+    per_row_radius = radii[nearest_idx]
+    df["node_id"] = np.where(nearest_dist <= per_row_radius,
                              node_ids[nearest_idx], None)
 
     assigned = df["node_id"].notna().sum()
@@ -47,4 +57,5 @@ def assign_node(lat: float, lon: float) -> str | None:
     a    = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(np.radians(_NODE_LATS))*np.sin(dlon/2)**2
     dist = R * 2 * np.arcsin(np.sqrt(a))
     idx  = np.argmin(dist)
-    return _NODE_IDS[idx] if dist[idx] <= RADIUS_KM else None
+    radius = NODE_RADIUS_KM.get(_NODE_IDS[idx], DEFAULT_RADIUS_KM)
+    return _NODE_IDS[idx] if dist[idx] <= radius else None
