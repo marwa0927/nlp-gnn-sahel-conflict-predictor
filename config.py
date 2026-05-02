@@ -3,7 +3,7 @@
 DATE_START = "2020-01-01"
 DATE_END = "2024-12-31"
 
-COUNTRY_CODES = ["ML", "NI", "UV", "CD", "MR"]
+COUNTRY_CODES = ["ML", "NI", "NE", "UV", "CD", "MR"]
 
 CAMEO_CONFLICT = list(range(18, 21))   # 18, 19, 20
 CAMEO_UNREST = list(range(14, 18))     # 14, 15, 16, 17

@@ -75,6 +75,8 @@ n_actors_lag7,         n_actors_roll7,          n_actors_roll14
 | Chad (CD) | ndjamena, abeche, mao, mongo |
 | Mauritania (MR) | nouakchott, nema |
 
+Niger nodes (niamey, agadez, tahoua, tillaberi) use a 120km assignment radius instead of the default 80km due to GDELT regional geocoding patterns for remote Sahel cities. Niger events are filtered using both NI and NE country codes.
+
 ---
 
 ## Missing-value convention
