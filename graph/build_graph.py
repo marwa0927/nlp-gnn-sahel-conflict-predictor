@@ -44,12 +44,11 @@ DISTANCE_DECAY_KM     = 400
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 1: Load nodes from data/nodes.py (Person A's source of truth)
+# Step 1: Load nodes from data/nodes.py
 # ─────────────────────────────────────────────────────────────────────────────
 def load_nodes() -> list:
     """
     Dynamically imports data/nodes.py and returns the NODES list.
-    This ensures Person B always uses the same node definitions as Person A.
     """
     spec = importlib.util.spec_from_file_location("nodes", NODES_PY)
     mod  = importlib.util.module_from_spec(spec)
@@ -66,14 +65,14 @@ def load_nodes() -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 def load_and_validate_features(nodes: list) -> pd.DataFrame:
     """
-    Loads Person A's feature matrix and checks that every node_id
+    Loads the feature matrix and checks that every node_id
     in nodes.py is present in the parquet file.
     Prints a warning for any node that has no feature data.
     """
     if not FEATURES_PATH.exists():
         print(f"\nfeatures_daily.parquet not found at {FEATURES_PATH}")
         print("   Graph construction will continue — but dataset.py needs this file.")
-        print("   Re-run after Person A delivers the real feature matrix.")
+        print("   Re-run after the feature matrix is available.")
         return None
 
     df = pd.read_parquet(FEATURES_PATH)
@@ -90,7 +89,7 @@ def load_and_validate_features(nodes: list) -> pd.DataFrame:
     if node_col is None:
         print("   Could not detect node identifier column in parquet.")
         print("   Expected one of: node_id, city, location, node, id")
-        print("   Flag this to Person A.")
+        print("   Check the parquet schema.")
         return df
 
     node_ids_in_data  = set(df[node_col].unique())
@@ -101,7 +100,7 @@ def load_and_validate_features(nodes: list) -> pd.DataFrame:
 
     if missing:
         print(f"\nNodes in nodes.py with NO feature data: {missing}")
-        print("   Flag to Person A — these nodes will be zero-filled.")
+        print("   Warning: these nodes will be zero-filled.")
     if extra:
         print(f"\nNode IDs in parquet not in nodes.py: {extra}")
         print("   These will be ignored by the graph builder.")

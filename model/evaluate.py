@@ -45,8 +45,7 @@ def evaluate_model(
     predict_fn must accept (x, edge_index, edge_attr) and return
     a tensor of shape (N, 2) with probabilities in [0, 1].
 
-    This signature is intentionally simple so Person A can wrap
-    any model (or even a baseline) in it.
+    This signature is flexible for wrapping different models.
     """
     all_probs_c,  all_probs_u  = [], []
     all_labels_c, all_labels_u = [], []
