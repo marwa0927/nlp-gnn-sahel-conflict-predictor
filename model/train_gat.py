@@ -30,7 +30,7 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 SPLITS = [
     {"name": "fold_1", "val_start": "2022-01-01", "test_start": "2023-01-01"},
     {"name": "fold_2", "val_start": "2023-01-01", "test_start": "2024-01-01"},
-    {"name": "fold_3", "val_start": "2024-01-01", "test_start": "2024-06-01"},
+    {"name": "fold_3", "val_start": "2024-01-01", "test_start": "2025-01-01"},
 ]
 
 # GAT config — tune heads and hidden_dim
