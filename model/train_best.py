@@ -238,7 +238,7 @@ def main():
         print(f"  Mean AP:    {np.mean(ap_vals):.4f}")
 
         if np.mean(auroc_vals) >= 0.65:
-            print("\n  ✅ AUROC ≥ 0.65 — model has real signal. Ready for Week 4.")
+            print("\n  ✅ AUROC ≥ 0.65 — model has real signal.")
         else:
             print("\n  ⚠️  AUROC < 0.65 — see troubleshooting below:")
             print("     1. Check for zero-coverage nodes in the input data")

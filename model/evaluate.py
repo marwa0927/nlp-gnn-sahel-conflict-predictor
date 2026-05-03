@@ -131,8 +131,7 @@ def save_predictions(
     fold_name: str,
 ):
     """
-    Save per-node, per-date predictions to a CSV.
-    This CSV is the input for the Folium risk map in Week 8.
+    Save per-node, per-date predictions to a CSV for visualization.
     """
     node_ids = [n["id"] for n in dataset.nodes]
     N = len(node_ids)

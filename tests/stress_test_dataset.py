@@ -13,7 +13,7 @@ from model.dataset import SahelConflictDataset
 
 def run_stress_tests():
     print("=" * 60)
-    print("  Dataset stress tests (Week 2)")
+    print("  Dataset stress tests")
     print("=" * 60)
 
     results = {}
