@@ -72,30 +72,31 @@ Saves `outputs/validation_gao_tone.png` — a time-series plot of `avg_tone` for
 
 ---
 
-## ACLED supplementary data (optional)
+## ACLED labels
 
-ACLED provides geo-coded conflict event data that can complement GDELT.
+1. Register at https://acleddata.com/register/ (free, research access)
+2. Export: Africa | 2018–2024 | All event types | CSV
+3. Save to `data/raw/acled_sahel_raw.csv`
+4. Run:
 
-1. Register for free access at: **https://acleddata.com/register/**
-2. After approval, go to **Export** → set:
-   - Region: **Africa**
-   - Date range: **2018-01-01 → 2024-12-31**
-   - Event types: **All**
-3. Download as CSV and save to: `data/raw/acled_sahel_raw.csv`
-
-ACLED integration is not yet scripted — planned for a future sprint.
+python -m data.acled_labels       # → data/processed/labels_daily.parquet
+python -m data.build_dataset      # → data/processed/dataset_daily.parquet
+python -m data.validate_labels    # → outputs/validation_ndjamena_conflict.png
 
 ---
 
-## Directory layout after reproduction
-
-```
 data/
 ├── raw/
-│   └── gdelt_sahel_raw.parquet     # ~50–200 MB
+│   ├── gdelt_sahel_raw.parquet
+│   └── acled_sahel_raw.csv
 ├── processed/
-│   └── features_daily.parquet      # ~5–20 MB, 45,675 rows × 21 cols
-├── nodes.py                        # 25-city node definitions (source of truth)
-├── validate.py                     # validation / sanity-check script
-└── README.md                       # this file
+│   ├── features_daily.parquet      # 45,675 rows × 27 cols
+│   ├── labels_daily.parquet        # 63,925 rows × 5 cols
+│   └── dataset_daily.parquet       # 45,675 rows × 29 cols (training file)
+├── nodes.py
+├── acled_labels.py
+├── build_dataset.py
+├── validate.py
+├── validate_labels.py
+└── README.md 
 ```
