@@ -67,7 +67,7 @@ def build_loss(train_dataset: SahelConflictDataset):
 
     if n_pos_c == 0 or n_pos_u == 0:
         print("⚠️  No positive labels found — using default weights (10x, 5x).")
-        print("   This is expected until Person A delivers ACLED labels.")
+        print("   This is expected when labels are not yet available.")
         w_conflict = torch.tensor([10.0])
         w_unrest   = torch.tensor([5.0])
     else:

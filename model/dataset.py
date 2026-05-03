@@ -102,7 +102,7 @@ def build_matrices_from_parquet(
         print(f"✅ Labels found — conflict rate={rate_c:.4f}  unrest rate={rate_u:.4f}")
     else:
         print(f"  Label columns {LABEL_COLS} not found in parquet.")
-        print("   Y will be all zeros until Person A delivers ACLED labels.")
+        print("   Warning: Y will be all zeros without labels.")
 
     # ── Pivot to (T, N, F) ───────────────────────────────────────────────────
     dates = sorted(df[date_col].unique())

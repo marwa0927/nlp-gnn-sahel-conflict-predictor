@@ -1,7 +1,7 @@
 """
 Walk-forward cross-validation splits for the Sahel conflict predictor.
 
-IMPORTANT — Person B must use these exact splits. No custom splitting.
+Use these exact splits for reproducibility. Custom splitting may lead to data leakage.
 """
 
 import sys
@@ -49,6 +49,6 @@ def get_split_data(
 def get_node_order() -> list[str]:
     """Canonical list of 25 node ids in NODES declaration order.
 
-    Person B must use this to align X matrix rows with adjacency matrix rows.
+    Use this to align X matrix rows with adjacency matrix rows.
     """
     return [n["id"] for n in NODES]

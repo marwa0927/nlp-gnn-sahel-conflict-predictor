@@ -1,8 +1,6 @@
 """
 tests/test_dataset.py
 =====================
-Person B — Week 1
-
 Pytest suite for graph, dataset, and model validation.
 Works with real data from dataset_daily.parquet + nodes.py.
 
@@ -58,7 +56,7 @@ def graph_files():
 @pytest.fixture(scope="session")
 def dataset(nodes, graph_files):
     if not FEATURES_PATH.exists():
-        pytest.skip("dataset_daily.parquet not found — waiting for Person A.")
+        pytest.skip("dataset_daily.parquet not found.")
     from model.dataset import SahelConflictDataset
     return SahelConflictDataset(split=None)
 
@@ -66,7 +64,7 @@ def dataset(nodes, graph_files):
 @pytest.fixture(scope="session")
 def train_dataset(nodes, graph_files):
     if not FEATURES_PATH.exists():
-        pytest.skip("dataset_daily.parquet not found — waiting for Person A.")
+        pytest.skip("dataset_daily.parquet not found.")
     from model.dataset import SahelConflictDataset
     return SahelConflictDataset(split="train")
 

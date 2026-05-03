@@ -381,7 +381,7 @@ def run_full_evaluation():
     if np.isnan(mean_auroc):
         print("  ⚠️  Could not compute mean AUROC.")
     elif mean_auroc >= 0.65:
-        print(f"  ✅ Mean AUROC={mean_auroc:.4f} — model has signal. Ready for Week 5.")
+        print(f"  ✅ Mean AUROC={mean_auroc:.4f} — model has signal.")
     elif mean_auroc >= 0.55:
         print(f"  ⚠️  Mean AUROC={mean_auroc:.4f} — borderline.")
         print("     Try: hidden_dim=128, check zero-coverage Niger nodes.")

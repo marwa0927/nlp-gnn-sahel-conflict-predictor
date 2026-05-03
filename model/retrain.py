@@ -10,7 +10,7 @@ import subprocess
 
 # Just call train_best.py — it reads best_config.json automatically
 print("=" * 60)
-print("  Week 5 — Retraining with fixed parquet")
+print("  Retraining with best configuration")
 print("  This overwrites checkpoints with better versions.")
 print("=" * 60)
 

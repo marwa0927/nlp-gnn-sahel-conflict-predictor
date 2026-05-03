@@ -262,7 +262,7 @@ def main():
         print("     Run: python notebooks/risk_map.py separately.")
 
     # ── Final summary ────────────────────────────────────────────────────────
-    print_banner("Demo complete — Sync 3 summary")
+    print_banner("Demo complete")
     print(f"""
   Pipeline:      GDELT → Features → GCN → Risk Scores
   Nodes:         {N} Sahel cities
